@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>SVMI+ viewer</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <strong>SVMI+ viewer</strong>
+    <span class="muted">Matrice 600 Pro · Ricoh Theta S dual-fisheye · Amiens</span>
+  </div>
+  <div id="status" class="muted status">loading…</div>
+</header>
+
+<main class="layout">
+  <section class="pane left">
+    <div class="camera-wrap" id="camWrap">
+      <canvas id="cam" aria-label="Camera frame"></canvas>
+      <div class="cam-badge" id="camBadge"></div>
+      <div class="cam-msg" id="camMsg" hidden></div>
+    </div>
+
+    <div class="transport">
+      <div class="btn-group">
+        <button id="btnFirst" class="icon" title="First frame (Home)" aria-label="First frame">
+          <svg viewBox="0 0 16 16"><path d="M3 3h2v10H3zM13 3v10L6 8z"/></svg>
+        </button>
+        <button id="btnBack10" title="Back 10 frames (Shift+←)">−10</button>
+        <button id="btnBack1" title="Back 1 frame (←)">−1</button>
+        <button id="btnPlay" class="play" title="Play / pause (Space)" aria-label="Play">
+          <svg class="i-play" viewBox="0 0 16 16"><path d="M4 2.5v11l9.5-5.5z"/></svg>
+          <svg class="i-pause" viewBox="0 0 16 16"><path d="M3.5 2.5h3v11h-3zM9.5 2.5h3v11h-3z"/></svg>
+        </button>
+        <button id="btnFwd1" title="Forward 1 frame (→)">+1</button>
+        <button id="btnFwd10" title="Forward 10 frames (Shift+→)">+10</button>
+        <button id="btnLast" class="icon" title="Last frame (End)" aria-label="Last frame">
+          <svg viewBox="0 0 16 16"><path d="M11 3h2v10h-2zM3 3v10l7-5z"/></svg>
+        </button>
+      </div>
+      <label class="speed" title="Playback speed ([ / ]); 1× = real time ≈ 10.14 fps">
+        <span class="muted">Speed</span>
+        <select id="speed"></select>
+      </label>
+    </div>
+
+    <div class="scrub-row">
+      <input type="range" id="scrub" min="0" max="0" step="1" value="0" aria-label="Frame">
+      <span class="time" id="timeReadout">00:00.0 / 00:00.0</span>
+    </div>
+
+    <div class="hud" id="hud">
+      <div class="cell"><span class="k">Frame</span><span class="v" id="hudFrame">–</span></div>
+      <div class="cell"><span class="k">Time</span><span class="v" id="hudTime">–</span></div>
+      <div class="cell"><span class="k">Altitude</span><span class="v" id="hudAlt">–</span></div>
+      <div class="cell"><span class="k">North</span><span class="v" id="hudN">–</span></div>
+      <div class="cell"><span class="k">East</span><span class="v" id="hudE">–</span></div>
+      <div class="cell"><span class="k">Heading</span><span class="v" id="hudHdg">–</span></div>
+    </div>
+
+    <div class="methods">
+      <div class="section-title">Methods <span class="muted" id="methodsNote"></span></div>
+      <table id="methodsTable" hidden>
+        <thead>
+          <tr>
+            <th class="name">Method</th>
+            <th title="Position error at the current frame">err</th>
+            <th title="Heading error at the current frame">Δψ</th>
+            <th title="Median position error over predicted frames">median</th>
+            <th title="Mean position error over predicted frames">mean</th>
+          </tr>
+        </thead>
+        <tbody id="methodsBody"></tbody>
+      </table>
+    </div>
+
+    <div class="hint muted">
+      <kbd>Space</kbd> play · <kbd>←</kbd><kbd>→</kbd> ±1 · <kbd>Shift</kbd>+<kbd>←</kbd><kbd>→</kbd> ±10 ·
+      <kbd>[</kbd><kbd>]</kbd> speed · <kbd>F</kbd> follow · <kbd>R</kbd> fit map · click the path to jump
+    </div>
+  </section>
+
+  <section class="pane right">
+    <div class="map-wrap" id="mapWrap">
+      <canvas id="map" aria-label="Orthophoto map"></canvas>
+      <div class="map-key" id="mapKey"></div>
+      <div class="map-tools">
+        <button id="btnFollow" class="toggle" aria-pressed="false" title="Keep the drone centred (F)">Follow drone</button>
+        <button id="btnFit" title="Fit trajectory (R)">Fit</button>
+        <button id="btnZoomIn" class="icon" title="Zoom in (+)" aria-label="Zoom in">+</button>
+        <button id="btnZoomOut" class="icon" title="Zoom out (−)" aria-label="Zoom out">−</button>
+      </div>
+      <div class="scalebar" id="scalebar"><div class="bar"></div><span></span></div>
+      <div class="attrib" id="attrib"></div>
+    </div>
+
+    <div class="chart-wrap">
+      <div class="chart-head">
+        <div class="tabs" id="chartTabs"></div>
+        <div class="readout" id="chartReadout"></div>
+      </div>
+      <div class="chart-body" id="chartBody"><canvas id="chart" aria-label="Per-frame chart"></canvas></div>
+    </div>
+  </section>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

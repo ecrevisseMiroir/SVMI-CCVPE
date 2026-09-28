@@ -1,2 +1,9 @@
 
 SVMI/
+.venv/
+data/
+results/
+logs/
+third_party/
+S1A_*.zip
+__pycache__/
