@@ -55,7 +55,11 @@ def write_run(run_id, method, params, frames, gt, color):
         {"method": method, "params": params, "summary": summary, "frames": frames}))
     manifest_path = RESULTS / "manifest.json"
     manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else {"methods": []}
-    manifest["methods"] = [m for m in manifest["methods"] if m["file"] != f"{run_id}/predictions.json"]
-    manifest["methods"].append({"name": method, "file": f"{run_id}/predictions.json", "color": color})
+    file = f"{run_id}/predictions.json"
+    previous = next((m for m in manifest["methods"] if m["file"] == file), {})
+    entry = {"name": method, "file": file, "color": color}
+    if "visible" in previous:
+        entry["visible"] = previous["visible"]
+    manifest["methods"] = [m for m in manifest["methods"] if m["file"] != file] + [entry]
     manifest_path.write_text(json.dumps(manifest, indent=2))
     return summary

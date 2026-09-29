@@ -18,10 +18,21 @@
 
 <main class="layout">
   <section class="pane left">
-    <div class="camera-wrap" id="camWrap">
-      <canvas id="cam" aria-label="Camera frame"></canvas>
-      <div class="cam-badge" id="camBadge"></div>
-      <div class="cam-msg" id="camMsg" hidden></div>
+    <div class="views" id="camViews">
+      <div class="view view-fisheye camera-wrap" id="camWrap">
+        <canvas id="cam" aria-label="Raw dual-fisheye frame"></canvas>
+        <div class="view-label">Dual fisheye (raw)</div>
+        <div class="cam-badge" id="camBadge"></div>
+        <div class="cam-msg" id="camMsg" hidden></div>
+      </div>
+      <div class="view view-nadir">
+        <canvas id="camNadir" aria-label="Nadir view, Game4Loc input"></canvas>
+        <div class="view-label">Nadir 60° → Game4Loc<span class="muted"> · up = forward</span></div>
+      </div>
+      <div class="view view-pano">
+        <canvas id="camPano" aria-label="360 panorama, CCVPE input"></canvas>
+        <div class="view-label">360° panorama → CCVPE<span class="muted"> · centre = forward, left→right clockwise</span></div>
+      </div>
     </div>
 
     <div class="transport">

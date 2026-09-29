@@ -15,6 +15,17 @@ The script writes:
 
 Options: `--size 640x360`, `--quality 80`, `--map-scale 0.5`, `--skip-frames`, `--skip-map`.
 
+Then render the model-input views shown next to the raw fisheye:
+
+```bash
+.venv/bin/python scripts/make_viewer_views.py
+```
+
+- `data/viewer_pano/`: the 640x320 360° panorama fed to CCVPE (centre = forward).
+- `data/viewer_nadir/`: the 512x384, 60° nadir view fed to Game4Loc (up = forward).
+
+A method listed in `results/manifest.json` with `"visible": false` starts unticked.
+
 ## 2. Serve and open
 
 ```bash

@@ -11,6 +11,8 @@ const CFG = {
     mapViewer: '../data/map/ign_z19_viewer.json',
     mapDir: '../data/map/',
     frames: '../data/viewer_frames/',
+    pano: '../data/viewer_pano/',
+    nadir: '../data/viewer_nadir/',
     results: '../results/',
   },
   speeds: [0.25, 0.5, 1, 2, 4, 8],
@@ -20,7 +22,7 @@ const CFG = {
     maxAhead: 300,
     around: 12,        // neighbours on both sides (for stepping / scrubbing)
     inflight: 8,       // concurrent requests
-    cache: 450,        // max decoded frames kept
+    cache: 200,        // max decoded frames kept (3 images each)
   },
   gapBreak: 50,        // break prediction polylines across index gaps larger than this
   gtColor: '#4cc2ff',
@@ -155,7 +157,7 @@ function buildMethod(spec, data, k) {
     name: spec.name || data.method || spec.file,
     color: spec.color || data.color || CFG.fallbackColors[k % CFG.fallbackColors.length],
     file: spec.file,
-    enabled: true,
+    enabled: spec.visible !== false,   // manifest may hide a method by default
     x: nan(), y: nan(), hdg: nan(), err: nan(), herr: nan(),
     idx: [],
     summary: data.summary || {},
@@ -288,19 +290,29 @@ function pickLevel(devScale) {
 }
 
 /* ------------------------------------------------------- frame preload -- */
-const cache = new Map();   // i -> {img, state: 'loading' | 'ready' | 'error'}
+// Views shown side by side; each frame loads one image per view.
+const VIEWS = [
+  { key: 'fisheye', dir: () => CFG.paths.frames, canvas: 'cam' },
+  { key: 'nadir', dir: () => CFG.paths.nadir, canvas: 'camNadir' },
+  { key: 'pano', dir: () => CFG.paths.pano, canvas: 'camPano' },
+];
+const cache = new Map();   // i -> {imgs: {view: Image}, state: 'loading' | 'ready' | 'error', ok: {view: bool}}
 let queue = [];
 let inflight = 0;
-let lastCamImg = null;
+const lastCamImg = {};
 
 function startLoad(i) {
-  const img = new Image();
-  img.decoding = 'async';
-  const e = { img, state: 'loading' };
+  const e = { imgs: {}, ok: {}, state: 'loading' };
   cache.set(i, e);
   inflight++;
-  img.src = CFG.paths.frames + GT.files[i];
-  img.decode().then(() => { e.state = 'ready'; }, () => { e.state = 'error'; }).finally(() => {
+  const loads = VIEWS.map((v) => {
+    const img = new Image();
+    img.decoding = 'async';
+    img.src = v.dir() + GT.files[i];
+    e.imgs[v.key] = img;
+    return img.decode().then(() => { e.ok[v.key] = true; }, () => { e.ok[v.key] = false; });
+  });
+  Promise.all(loads).then(() => { e.state = e.ok.fisheye ? 'ready' : 'error'; }).finally(() => {
     inflight--;
     if (i === S.frame) { dirty.cam = true; kick(); }
     pump();
@@ -447,13 +459,13 @@ function makeCanvas(id) {
 }
 
 let cam, map, chart;
+const camViews = {};
 
 /* -------------------------------------------------------------- camera -- */
 function drawCam() {
-  const { ctx, canvas } = cam;
   const e = cache.get(S.frame);
   const msg = $('camMsg');
-  if (e && e.state === 'ready') lastCamImg = e.img;
+  if (e && e.state === 'ready') for (const v of VIEWS) if (e.ok[v.key]) lastCamImg[v.key] = e.imgs[v.key];
   if (e && e.state === 'error') {
     msg.hidden = false;
     msg.innerHTML = `Frame <code>${escapeHtml(GT.files[S.frame])}</code> not found.<br>` +
@@ -461,7 +473,11 @@ function drawCam() {
   } else {
     msg.hidden = true;
   }
-  const img = lastCamImg;
+  for (const v of VIEWS) drawView(camViews[v.key], lastCamImg[v.key]);
+}
+
+function drawView(view, img) {
+  const { ctx, canvas } = view;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -1096,6 +1112,7 @@ function tick(now) {
 /* ---------------------------------------------------------------- init -- */
 async function init() {
   cam = makeCanvas('cam');
+  for (const v of VIEWS) camViews[v.key] = v.key === 'fisheye' ? cam : makeCanvas(v.canvas);
   map = makeCanvas('map');
   chart = makeCanvas('chart');
   let fitted = false;

@@ -299,3 +299,34 @@ kbd {
   .map-wrap { flex: none; height: 62vh; }
   .brand .muted { display: none; }
 }
+
+/* ---- camera views: raw fisheye + nadir on top, panorama below ---- */
+.views {
+  flex: none;
+  display: grid;
+  grid-template-columns: 16fr 12fr;   /* 16:9 and 4:3 at equal height */
+  grid-template-rows: auto auto;
+  gap: 6px;
+}
+.views .view {
+  position: relative;
+  background: #000;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.views .view canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.views .view-fisheye { aspect-ratio: 16 / 9; width: auto; max-height: none; }
+.views .view-nadir { aspect-ratio: 4 / 3; }
+.views .view-pano { grid-column: 1 / -1; aspect-ratio: 2 / 1; max-height: 34vh; justify-self: center; width: 100%; }
+.view-label {
+  position: absolute; left: 8px; top: 6px;
+  font: 12px/1.3 system-ui, sans-serif;
+  color: var(--text);
+  background: rgba(0, 0, 0, .55);
+  padding: 2px 6px; border-radius: 4px;
+  pointer-events: none;
+}
+@media (max-width: 700px) {
+  .views { grid-template-columns: 1fr; }
+}
