@@ -269,14 +269,13 @@ def fig_gt(ex):
         ("SVMI+ camera_poses.txt", ["2799 rows, one per image:", "position (m) relative to frame 0,",
                                     "rotation as axis-angle"]),
         ("Takeoff GNSS fix", ["49.967068 N, 2.266771 E", "(local origin)"]),
-        ("Convention fixes", ["column 2 is south, not north", "heading = 180° − logged value",
-                              "altitude relative to frame 0", "(checked with sun direction and", "forest landmarks)"]),
     ]
-    y = 160
+    # centre the input boxes on the trajectory image (y 205..605)
+    y = 405 - (sum(50 + len(ls) * 24 for _, ls in items) + 22 * (len(items) - 1)) / 2
     for k, (title, ls) in enumerate(items):
         h = 50 + len(ls) * 24
         body += box(60, y, 360, h, "gt") + text(80, y + 34, title, 19, c, 700) + lines(80, y + 62, ls, 16)
-        body += arrow(428, y + h / 2, 488, 430, c, 2.5)
+        body += arrow(428, y + h / 2, 488, 405, c, 2.5)
         y += h + 22
     # GT on orthophoto
     body += text(500, 160, "Ground-truth trajectory", 20, INK, 700)
