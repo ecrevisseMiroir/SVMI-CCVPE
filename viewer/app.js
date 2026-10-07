@@ -12,7 +12,6 @@ const CFG = {
     mapDir: '../data/map/',
     frames: '../data/viewer_frames/',
     pano: '../data/viewer_pano/',
-    nadir: '../data/viewer_nadir/',
     results: '../results/',
   },
   speeds: [0.25, 0.5, 1, 2, 4, 8],
@@ -293,7 +292,6 @@ function pickLevel(devScale) {
 // Views shown side by side; each frame loads one image per view.
 const VIEWS = [
   { key: 'fisheye', dir: () => CFG.paths.frames, canvas: 'cam' },
-  { key: 'nadir', dir: () => CFG.paths.nadir, canvas: 'camNadir' },
   { key: 'pano', dir: () => CFG.paths.pano, canvas: 'camPano' },
 ];
 const cache = new Map();   // i -> {imgs: {view: Image}, state: 'loading' | 'ready' | 'error', ok: {view: bool}}

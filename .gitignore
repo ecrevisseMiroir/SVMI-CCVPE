@@ -7,3 +7,4 @@ logs/
 third_party/
 S1A_*.zip
 __pycache__/
+docs/diagrams/assets/

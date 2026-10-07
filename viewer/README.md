@@ -22,7 +22,7 @@ Then render the model-input views shown next to the raw fisheye:
 ```
 
 - `data/viewer_pano/`: the 640x320 360° panorama fed to CCVPE (centre = forward).
-- `data/viewer_nadir/`: the 512x384, 60° nadir view fed to Game4Loc (up = forward).
+- `data/viewer_nadir/`: the 512x384, 60° nadir view fed to Game4Loc (not shown in the viewer).
 
 A method listed in `results/manifest.json` with `"visible": false` starts unticked.
 
