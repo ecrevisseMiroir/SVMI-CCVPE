@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DINOv2 Global Matches</title>
+<style>
+  :root { --bg:#16181c; --panel:#1f2228; --fg:#e6e6e6; --dim:#9aa0a8; --acc:#4da3ff; }
+  * { box-sizing:border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--fg);
+    font:13px/1.4 system-ui, sans-serif; overflow:hidden; }
+  body { display:flex; flex-direction:column; }
+  #bar { display:flex; flex-wrap:wrap; gap:6px 14px; align-items:center; padding:8px 12px;
+    background:var(--panel); border-bottom:1px solid #2c3038; }
+  #bar label { color:var(--dim); display:flex; align-items:center; gap:5px; }
+  #bar button { background:#2b3038; color:var(--fg); border:1px solid #3a404a; border-radius:4px;
+    padding:3px 9px; cursor:pointer; }
+  #bar button:hover { border-color:var(--acc); }
+  #frame { width:260px; }
+  #flabel { font-variant-numeric:tabular-nums; min-width:180px; }
+  #stage { position:relative; display:flex; flex:1; min-height:0; }
+  #left { width:44%; padding:12px; display:flex; flex-direction:column; gap:10px; }
+  #right { flex:1; position:relative; border-left:1px solid #2c3038; }
+  #pano { width:100%; cursor:crosshair; display:block; }
+  #map { position:absolute; inset:0; width:100%; height:100%; cursor:grab; }
+  #lines { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
+  #stats { color:var(--dim); font-variant-numeric:tabular-nums; }
+  #help { color:var(--dim); font-size:12px; margin-top:auto; }
+  #status { padding:4px 12px; color:var(--dim); font-size:12px; height:26px; }
+  kbd { background:#2b3038; border:1px solid #3a404a; border-radius:3px; padding:0 4px; font-size:11px; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <button id="prev" title="previous (←)">◀</button>
+  <button id="play" title="play / pause (space)">▶</button>
+  <button id="next" title="next (→)">▶|</button>
+  <input id="frame" type="range" min="0" value="0">
+  <span id="flabel">–</span>
+  <label>min cos <input id="thr" type="range" min="0" max="1" step="0.01" value="0.5"><span id="thrv">0.50</span></label>
+  <label>ignore top rows <input id="skip" type="range" min="0" max="22" step="1" value="6"><span id="skipv">6</span></label>
+  <label><input id="mutual" type="checkbox"> mutual only</label>
+  <label><input id="showlines" type="checkbox" checked> lines</label>
+  <label><input id="showgt" type="checkbox"> show GT</label>
+  <label>fps <input id="fps" type="number" min="1" max="30" value="4" style="width:44px"></label>
+  <button id="reload" title="re-read data/dino (the precompute may still be running)">reload data</button>
+</div>
+<div id="stage">
+  <div id="left">
+    <canvas id="pano"></canvas>
+    <div id="stats"></div>
+    <div id="help">
+      Every panorama patch is compared with <b>every</b> map patch of the whole area (DINOv2, cosine).
+      Dots on the map are each pano patch's best match; colour = panorama column (azimuth).
+      Click a pano patch to see its top-K matches; click again or <kbd>Esc</kbd> to go back.<br>
+      <kbd>←</kbd>/<kbd>→</kbd> step, <kbd>Shift</kbd> ×10, <kbd>Space</kbd> play, <kbd>L</kbd> lines,
+      <kbd>M</kbd> mutual, <kbd>G</kbd> GT, <kbd>R</kbd> fit map. Map: wheel zoom, drag pan.
+    </div>
+  </div>
+  <div id="right"><canvas id="map"></canvas></div>
+  <canvas id="lines"></canvas>
+</div>
+<div id="status">loading…</div>
+
+<script>
+"use strict";
+const DATA = "../data/dino/";
+const $ = id => document.getElementById(id);
+let meta, buf, mapImg, frames = [], k = 0, playing = null;
+let selected = -1, hovered = -1;
+const view = { s: 1, ox: 0, oy: 0 };
+const panoCache = new Map();
+const dpr = () => window.devicePixelRatio || 1;
+
+async function load(keepFrame) {
+  const prevI = frames.length ? frames[k].i : null;
+  $("status").textContent = "loading data…";
+  const bust = "?t=" + Date.now();
+  meta = await (await fetch(DATA + "meta.json" + bust)).json();
+  buf = await (await fetch(DATA + "matches.bin" + bust)).arrayBuffer();
+  const nComplete = Math.floor(buf.byteLength / meta.record_bytes);
+  frames = meta.frames.slice(0, nComplete);
+  if (!mapImg) {
+    mapImg = new Image();
+    mapImg.src = DATA + meta.map.image;
+    await mapImg.decode();
+    fitMap();
+  }
+  $("frame").max = frames.length - 1;
+  const want = keepFrame && prevI !== null ? prevI : parseInt((location.hash.match(/f=(\d+)/) || [])[1] ?? "-1");
+  k = want >= 0 ? nearest(want) : 0;
+  $("status").textContent = `${frames.length} frames loaded (stride ${frames.length > 1 ? frames[1].i - frames[0].i : "–"}), ` +
+    `map ${meta.map.cols}×${meta.map.rows} patches at ${(meta.map.m_per_px * meta.patch).toFixed(1)} m each, ` +
+    `top-${meta.top_k} per pano patch, DINOv2 ${meta.arch}`;
+  setFrame(k);
+}
+
+function nearest(i) {
+  let best = 0;
+  frames.forEach((f, j) => { if (Math.abs(f.i - i) < Math.abs(frames[best].i - i)) best = j; });
+  return best;
+}
+
+function record(j) {
+  const P = meta.pano.rows * meta.pano.cols, K = meta.top_k, off = j * meta.record_bytes;
+  return { idx: new Int32Array(buf, off, P * K), sim: new Uint8Array(buf, off + P * K * 4, P * K),
+           mut: new Uint8Array(buf, off + P * K * 5, P), P, K };
+}
+
+function panoImage(i) {
+  if (!panoCache.has(i)) {
+    const im = new Image();
+    im.src = `${DATA}${meta.pano.image_dir}/${String(i).padStart(6, "0")}.jpg`;
+    im.onload = () => { if (frames[k] && frames[k].i === i) draw(); };
+    panoCache.set(i, im);
+    if (panoCache.size > 60) panoCache.delete(panoCache.keys().next().value);
+  }
+  return panoCache.get(i);
+}
+
+function setFrame(j) {
+  k = Math.max(0, Math.min(frames.length - 1, j));
+  $("frame").value = k;
+  const f = frames[k];
+  history.replaceState(null, "", "#f=" + f.i);
+  for (let d = 1; d <= 3; d++) if (frames[k + d]) panoImage(frames[k + d].i);
+  draw();
+}
+
+// ---- geometry ---------------------------------------------------------------
+const hue = c => `hsl(${(c + 0.5) / meta.pano.cols * 330}, 90%, 58%)`;
+function panoPatchCenter(p) {  // in pano-canvas CSS px
+  const r = Math.floor(p / meta.pano.cols), c = p % meta.pano.cols, w = $("pano").clientWidth;
+  return [(c + 0.5) / meta.pano.cols * w, (r + 0.5) / meta.pano.rows * w / 2];
+}
+function mapPatchPx(id) { return [((id % meta.map.cols) + 0.5) * meta.patch, (Math.floor(id / meta.map.cols) + 0.5) * meta.patch]; }
+const toScreen = ([x, y]) => [x * view.s + view.ox, y * view.s + view.oy];
+
+function fitMap() {
+  const r = $("right").getBoundingClientRect();
+  view.s = Math.min(r.width / meta.map.w, r.height / meta.map.h);
+  view.ox = (r.width - meta.map.w * view.s) / 2;
+  view.oy = (r.height - meta.map.h * view.s) / 2;
+  draw();
+}
+
+function visiblePatches(rec) {
+  const thr = +$("thr").value * 255, skip = +$("skip").value, mutualOnly = $("mutual").checked, out = [];
+  for (let p = 0; p < rec.P; p++) {
+    if (Math.floor(p / meta.pano.cols) < skip) continue;
+    if (rec.sim[p * rec.K] < thr) continue;
+    if (mutualOnly && !rec.mut[p]) continue;
+    out.push(p);
+  }
+  return out;
+}
+
+// ---- drawing ----------------------------------------------------------------
+function sizeCanvas(cv, w, h) {
+  const d = dpr();
+  if (cv.width !== Math.round(w * d) || cv.height !== Math.round(h * d)) {
+    cv.width = Math.round(w * d); cv.height = Math.round(h * d);
+  }
+  const ctx = cv.getContext("2d");
+  ctx.setTransform(d, 0, 0, d, 0, 0);
+  return ctx;
+}
+
+function draw() {
+  if (!meta || !frames.length) return;
+  const f = frames[k], rec = record(k), vis = visiblePatches(rec);
+  const showSel = selected >= 0;
+  const pairs = [];  // [panoPatch, mapId, rank, sim]
+  if (showSel) for (let r = 0; r < rec.K; r++) pairs.push([selected, rec.idx[selected * rec.K + r], r, rec.sim[selected * rec.K + r]]);
+  else for (const p of vis) pairs.push([p, rec.idx[p * rec.K], 0, rec.sim[p * rec.K]]);
+
+  // pano
+  const pc = $("pano"), pw = pc.clientWidth, ph = pw / 2, px = sizeCanvas(pc, pw, ph);
+  pc.style.height = ph + "px";
+  px.fillStyle = "#000"; px.fillRect(0, 0, pw, ph);
+  const im = panoImage(f.i);
+  if (im.complete && im.naturalWidth) px.drawImage(im, 0, 0, pw, ph);
+  const cw = pw / meta.pano.cols, chh = ph / meta.pano.rows;
+  const skip = +$("skip").value;
+  if (skip) { px.fillStyle = "rgba(0,0,0,0.45)"; px.fillRect(0, 0, pw, skip * chh); }
+  px.lineWidth = 1.5;
+  for (const p of (showSel ? [selected] : vis)) {
+    const r = Math.floor(p / meta.pano.cols), c = p % meta.pano.cols;
+    px.strokeStyle = hue(c);
+    px.strokeRect(c * cw + 1, r * chh + 1, cw - 2, chh - 2);
+  }
+  if (hovered >= 0 && hovered !== selected) {
+    const r = Math.floor(hovered / meta.pano.cols), c = hovered % meta.pano.cols;
+    px.strokeStyle = "#fff"; px.lineWidth = 2; px.strokeRect(c * cw, r * chh, cw, chh);
+  }
+
+  // map
+  const right = $("right").getBoundingClientRect(), mc = $("map"), mx = sizeCanvas(mc, right.width, right.height);
+  mx.fillStyle = "#0d0e10"; mx.fillRect(0, 0, right.width, right.height);
+  mx.save(); mx.translate(view.ox, view.oy); mx.scale(view.s, view.s);
+  mx.imageSmoothingEnabled = view.s < 2;
+  mx.drawImage(mapImg, 0, 0);
+  mx.restore();
+  const ptsScreen = pairs.map(([p, id]) => toScreen(mapPatchPx(id)));
+  pairs.forEach(([p, id, rank, s], n) => {
+    const [x, y] = ptsScreen[n], c = p % meta.pano.cols;
+    mx.beginPath(); mx.arc(x, y, showSel ? 7 - rank : 3.5, 0, 7);
+    mx.fillStyle = hue(c); mx.fill();
+    mx.lineWidth = 1; mx.strokeStyle = "rgba(0,0,0,0.7)"; mx.stroke();
+    if (showSel) { mx.fillStyle = "#fff"; mx.font = "bold 12px system-ui"; mx.fillText(`${rank + 1}  ${(s / 255).toFixed(2)}`, x + 9, y + 4); }
+  });
+  if (hovered >= 0 && !showSel) {
+    const [x, y] = toScreen(mapPatchPx(rec.idx[hovered * rec.K]));
+    mx.beginPath(); mx.arc(x, y, 9, 0, 7); mx.strokeStyle = "#fff"; mx.lineWidth = 2; mx.stroke();
+  }
+  let gtStat = "";
+  if ($("showgt").checked) {
+    const [gx, gy] = toScreen([f.gt_x, f.gt_y]), a = f.heading * Math.PI / 180;
+    mx.beginPath(); mx.moveTo(gx, gy); mx.lineTo(gx + 26 * Math.sin(a), gy - 26 * Math.cos(a));
+    mx.strokeStyle = "#fff"; mx.lineWidth = 2.5; mx.stroke();
+    mx.beginPath(); mx.arc(gx, gy, 7, 0, 7); mx.fillStyle = "#fff"; mx.fill();
+    mx.strokeStyle = "#000"; mx.lineWidth = 1.5; mx.stroke();
+    if (pairs.length) {
+      const d = pairs.map(([, id]) => { const [x, y] = mapPatchPx(id); return Math.hypot(x - f.gt_x, y - f.gt_y) * meta.map.m_per_px; })
+        .sort((a, b) => a - b);
+      gtStat = ` · median distance of shown matches to GT ${d[d.length >> 1].toFixed(0)} m`;
+    }
+  }
+
+  // lines across panels
+  const st = $("stage").getBoundingClientRect(), lc = $("lines"), lx = sizeCanvas(lc, st.width, st.height);
+  lx.clearRect(0, 0, st.width, st.height);
+  if ($("showlines").checked) {
+    const pr = pc.getBoundingClientRect();
+    lx.save();
+    lx.globalAlpha = showSel ? 0.9 : 0.35; lx.lineWidth = showSel ? 1.5 : 1;
+    pairs.forEach(([p], n) => {
+      const [ax, ay] = panoPatchCenter(p), [bx, by] = ptsScreen[n];
+      if (bx < 0 || by < 0 || bx > right.width || by > right.height) return;
+      lx.beginPath();
+      lx.moveTo(pr.left - st.left + ax, pr.top - st.top + ay);
+      lx.lineTo(right.left - st.left + bx, right.top - st.top + by);
+      lx.strokeStyle = hue(p % meta.pano.cols); lx.stroke();
+    });
+    lx.restore();
+  }
+
+  const sims = vis.map(p => rec.sim[p * rec.K] / 255).sort((a, b) => a - b);
+  $("flabel").textContent = `frame ${f.i} · ${f.alt.toFixed(0)} m · ${k + 1}/${frames.length}`;
+  $("stats").textContent = showSel
+    ? `pano patch row ${Math.floor(selected / meta.pano.cols)}, col ${selected % meta.pano.cols}: top-${rec.K} matches over the whole area${gtStat}`
+    : `${vis.length} / ${rec.P} pano patches shown · median best cos ${sims.length ? sims[sims.length >> 1].toFixed(2) : "–"} · ` +
+      `${rec.mut.reduce((a, b) => a + b, 0)} mutual${gtStat}`;
+}
+
+// ---- interaction ------------------------------------------------------------
+function panoPatchAt(ev) {
+  const r = $("pano").getBoundingClientRect();
+  const c = Math.floor((ev.clientX - r.left) / r.width * meta.pano.cols);
+  const row = Math.floor((ev.clientY - r.top) / r.height * meta.pano.rows);
+  return c >= 0 && c < meta.pano.cols && row >= 0 && row < meta.pano.rows ? row * meta.pano.cols + c : -1;
+}
+$("pano").addEventListener("mousemove", ev => { const p = panoPatchAt(ev); if (p !== hovered) { hovered = p; draw(); } });
+$("pano").addEventListener("mouseleave", () => { hovered = -1; draw(); });
+$("pano").addEventListener("click", ev => { const p = panoPatchAt(ev); selected = p === selected ? -1 : p; draw(); });
+
+let drag = null;
+$("map").addEventListener("mousedown", ev => { drag = [ev.clientX - view.ox, ev.clientY - view.oy]; $("map").style.cursor = "grabbing"; });
+window.addEventListener("mouseup", () => { drag = null; $("map").style.cursor = "grab"; });
+window.addEventListener("mousemove", ev => { if (drag) { view.ox = ev.clientX - drag[0]; view.oy = ev.clientY - drag[1]; draw(); } });
+$("map").addEventListener("wheel", ev => {
+  ev.preventDefault();
+  const r = $("map").getBoundingClientRect(), mxp = ev.clientX - r.left, myp = ev.clientY - r.top;
+  const z = Math.exp(-ev.deltaY * 0.0015), s = Math.max(0.05, Math.min(8, view.s * z));
+  view.ox = mxp - (mxp - view.ox) * s / view.s; view.oy = myp - (myp - view.oy) * s / view.s; view.s = s;
+  draw();
+}, { passive: false });
+$("map").addEventListener("dblclick", fitMap);
+
+function togglePlay() {
+  if (playing) { clearInterval(playing); playing = null; $("play").textContent = "▶"; return; }
+  $("play").textContent = "❚❚";
+  playing = setInterval(() => { if (k >= frames.length - 1) togglePlay(); else setFrame(k + 1); }, 1000 / +$("fps").value);
+}
+$("play").onclick = togglePlay;
+$("fps").onchange = () => { if (playing) { togglePlay(); togglePlay(); } };
+$("prev").onclick = () => setFrame(k - 1);
+$("next").onclick = () => setFrame(k + 1);
+$("frame").oninput = ev => setFrame(+ev.target.value);
+$("reload").onclick = () => load(true);
+for (const id of ["mutual", "showlines", "showgt"]) $(id).onchange = draw;
+$("thr").oninput = () => { $("thrv").textContent = (+$("thr").value).toFixed(2); draw(); };
+$("skip").oninput = () => { $("skipv").textContent = $("skip").value; draw(); };
+window.addEventListener("resize", draw);
+window.addEventListener("keydown", ev => {
+  if (ev.target.tagName === "INPUT" && ev.target.type === "number") return;
+  const step = ev.shiftKey ? 10 : 1;
+  if (ev.key === "ArrowLeft") { setFrame(k - step); ev.preventDefault(); }
+  else if (ev.key === "ArrowRight") { setFrame(k + step); ev.preventDefault(); }
+  else if (ev.key === " ") { togglePlay(); ev.preventDefault(); }
+  else if (ev.key === "Escape") { selected = -1; draw(); }
+  else if (ev.key === "r" || ev.key === "R") fitMap();
+  else if (ev.key === "l" || ev.key === "L") { $("showlines").checked ^= 1; draw(); }
+  else if (ev.key === "m" || ev.key === "M") { $("mutual").checked ^= 1; draw(); }
+  else if (ev.key === "g" || ev.key === "G") { $("showgt").checked ^= 1; draw(); }
+});
+
+load(false).catch(err => {
+  $("status").textContent = `Failed to load ${DATA}: ${err}. Run dino/precompute_global_matches.py, ` +
+    `serve the repo root (python3 -m http.server) and open /viewer/dino.html.`;
+});
+</script>
+</body>
+</html>
